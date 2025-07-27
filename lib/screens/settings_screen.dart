@@ -177,6 +177,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioService>(context);
 
+    // ブラインドレベルの表示文字列を事前に計算し、マップに保存する
+    final Map<String, String> calculatedLevelDisplays = {};
+    int tempBlindLevelCounter = 0;
+    for (final level in _currentLevels) {
+      if (level.isBreak) {
+        calculatedLevelDisplays[level.id] = 'Break';
+      } else {
+        tempBlindLevelCounter++;
+        calculatedLevelDisplays[level.id] = '$tempBlindLevelCounter';
+      }
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('トーナメント設定', style: TextStyle(color: Colors.white)),
@@ -236,10 +248,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       }
                       final item = _currentLevels.removeAt(oldIndex);
                       _currentLevels.insert(newIndex, item);
+                      // onReorder後にsetStateが呼ばれることで、buildが再実行され、
+                      // calculatedLevelDisplaysが新しい順序で再計算される。
+                      // そのため、ここで明示的に何かを更新する必要はない。
                     });
                   },
                   itemBuilder: (context, index) {
                     final level = _currentLevels[index];
+                    
+                    // 事前に計算された表示文字列をマップから取得
+                    final levelDisplay = calculatedLevelDisplays[level.id] ?? '';
+
                     return Card(
                       key: ValueKey(level.id), // ReorderableListViewにはkeyが必須
                       margin: const EdgeInsets.symmetric(vertical: 4.0),
@@ -252,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             SizedBox(
                               width: 40,
                               child: Text(
-                                level.isBreak ? 'Break' : '${index + 1}',
+                                levelDisplay, // 調整した表示を使用
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),
