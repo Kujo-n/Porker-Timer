@@ -3,6 +3,7 @@ import 'package:path_provider/path_provider.dart'; // ファイルパス取得�
 import 'dart:convert'; // JSONエンコード/デコード用
 import 'dart:io'; // ファイル操作用
 import 'package:flutter/services.dart' show rootBundle; // アセット読み込み用
+import 'package:shared_preferences/shared_preferences.dart'; // 最後に使用された設定名保存用
 import 'package:poker_timer_app/models/tournament_settings.dart'; // TournamentSettingsモデルのインポート
 import 'package:poker_timer_app/models/blind_level.dart'; // BlindLevelモデルのインポート (TournamentSettingsが依存するため)
 
@@ -12,9 +13,11 @@ class SettingsService extends ChangeNotifier {
   static const String _fileExtension = '.json';
   static const String _defaultSettingsFileName = 'Default-Tabel.json';
   static const String _defaultSettingsAssetPath = 'assets/default_settings/Default-Tabel.json';
+  static const String _lastUsedSettingKey = 'last_used_tournament_setting'; // 最後に使用された設定名のキー
 
   List<String> _savedSettingNames = [];
   late Future<void> _initializationFuture; // 初期化完了を待機するためのFuture
+  late SharedPreferences _prefs; // SharedPreferencesインスタンス
 
   List<String> get savedSettingNames => _savedSettingNames;
 
@@ -24,6 +27,7 @@ class SettingsService extends ChangeNotifier {
 
   /// SettingsServiceの非同期初期化処理
   Future<void> _init() async {
+    _prefs = await SharedPreferences.getInstance(); // SharedPreferencesを初期化
     await _loadSavedSettingNames(); // まず既存の設定名をロード
 
     // デフォルト設定ファイルが保存済み設定リストにない場合、アセットからコピーして保存
@@ -89,6 +93,7 @@ class SettingsService extends ChangeNotifier {
       final String jsonString = jsonEncode(settings.toJson());
       await file.writeAsString(jsonString);
       await _loadSavedSettingNames(); // 保存後にリストを更新
+      await saveLastUsedSettingName(settings.name); // 最後に使用された設定として記録
       debugPrint('設定 "${settings.name}" がファイルに保存されました: ${file.path}');
     } catch (e) {
       debugPrint('設定の保存に失敗しました: $e');
@@ -103,6 +108,7 @@ class SettingsService extends ChangeNotifier {
         final String jsonString = await file.readAsString();
         final Map<String, dynamic> jsonMap = jsonDecode(jsonString);
         debugPrint('設定 "${name}" がファイルからロードされました: ${file.path}');
+        await saveLastUsedSettingName(name); // 最後に使用された設定として記録
         return TournamentSettings.fromJson(jsonMap);
       }
     } catch (e) {
@@ -118,10 +124,25 @@ class SettingsService extends ChangeNotifier {
       if (await file.exists()) {
         await file.delete();
         await _loadSavedSettingNames(); // 削除後にリストを更新
+        // 削除した設定が最後に使用された設定だった場合、記録をクリア
+        if (loadLastUsedSettingName() == name) {
+          await _prefs.remove(_lastUsedSettingKey);
+        }
         debugPrint('設定 "${name}" がファイルから削除されました: ${file.path}');
       }
     } catch (e) {
       debugPrint('設定の削除に失敗しました: $e');
     }
+  }
+
+  /// 最後に使用された設定名を保存する
+  Future<void> saveLastUsedSettingName(String name) async {
+    await _prefs.setString(_lastUsedSettingKey, name);
+    debugPrint('最後に使用された設定: $name');
+  }
+
+  /// 最後に使用された設定名を読み込む
+  String? loadLastUsedSettingName() {
+    return _prefs.getString(_lastUsedSettingKey);
   }
 }

@@ -18,6 +18,13 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tournamentNameController = TextEditingController();
+
+  // 各BlindLevelの各フィールドに対応するTextEditingControllerを管理するマップ
+  final Map<String, TextEditingController> _durationControllers = {};
+  final Map<String, TextEditingController> _sbControllers = {};
+  final Map<String, TextEditingController> _bbControllers = {};
+  final Map<String, TextEditingController> _anteControllers = {};
+
   List<BlindLevel> _currentLevels = [];
   String? _originalSettingName; // ロードされた設定の元の名前を保持
 
@@ -26,54 +33,152 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     // 設定画面を開いた際に、現在のタイマー設定を反映する
     // TimerServiceがmain.dartで既に初期化されていることを期待する
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final timerService = Provider.of<TimerService>(context, listen: false);
-      
-      // timerService.currentSettings は main.dart で既に初期化されているはずなので、nullチェックは不要
-      // ただし、念のためnullチェックを残しておき、もしnullの場合はデフォルトの空設定で初期化する
+      final settingsService = Provider.of<SettingsService>(context, listen: false);
+
+      // SettingsServiceの非同期初期化が完了するのを待つ
+      await settingsService.initializationComplete;
+
+      TournamentSettings? loadedSettings;
+
+      // 1. TimerServiceに現在の設定がロードされているか確認
       if (timerService.currentSettings != null) {
-        setState(() {
-          _tournamentNameController.text = timerService.currentSettings!.name;
-          _currentLevels = List.from(timerService.currentSettings!.levels); // ディープコピー
-          _originalSettingName = timerService.currentSettings!.name;
-        });
+        loadedSettings = timerService.currentSettings;
       } else {
-        // 万が一、currentSettingsがnullの場合のフォールバック
-        setState(() {
-          _tournamentNameController.text = '新規設定';
-          _currentLevels = [];
-        });
-        _addBlindLevel(); // 少なくとも1つのレベルを追加
+        // 2. TimerServiceに設定がない場合、保存されたデフォルト設定または最初の保存済み設定をロード
+        const String defaultSettingName = 'Default-Tabel'; // デフォルト設定ファイルの名前（拡張子なし）
+
+        if (settingsService.savedSettingNames.contains(defaultSettingName)) {
+          // デフォルト設定が保存されている場合、それをロード
+          loadedSettings = await settingsService.loadSettings(defaultSettingName);
+        } else if (settingsService.savedSettingNames.isNotEmpty) {
+          // デフォルト設定がないが、他の保存済み設定がある場合、最初のものをロード
+          loadedSettings = await settingsService.loadSettings(settingsService.savedSettingNames.first);
+        }
+      }
+
+      // 3. どの設定もロードできなかった場合、新規のデフォルト設定を作成
+      if (loadedSettings == null) {
+        loadedSettings = TournamentSettings(name: '新規設定', levels: []); // 初期は空のレベルリスト
+      }
+
+      // UIを更新
+      setState(() {
+        // loadedSettingsはここで非nullであることが保証される
+        _tournamentNameController.text = loadedSettings!.name;
+        _currentLevels = List.from(loadedSettings.levels); // ディープコピー
+        _originalSettingName = loadedSettings.name;
+        _initControllers(); // コントローラーを初期化
+      });
+
+      // TimerServiceに、現在UIに表示されている設定を初期化する
+      timerService.initializeTimer(loadedSettings!);
+
+      // もしロードされた設定（または新規作成された設定）にレベルが一つもなければ、初期レベルを一つ追加
+      if (_currentLevels.isEmpty) {
+        _addBlindLevel();
+      }
+
+      // もし設定名が「新規設定」で、それが保存されたものではない場合、_originalSettingNameをnullにする
+      // これにより、「新規設定」として保存しようとした際に別名保存ではなく新規保存となる
+      if (_tournamentNameController.text == '新規設定' && _originalSettingName == '新規設定') {
         _originalSettingName = null;
       }
     });
   }
 
+  // コントローラーを初期化するヘルパーメソッド
+  void _initControllers() {
+    _disposeControllers(); // 既存のコントローラーを破棄
+
+    for (final level in _currentLevels) {
+      _durationControllers[level.id] = TextEditingController(text: level.durationMinutes.toString());
+      _sbControllers[level.id] = TextEditingController(text: level.smallBlind.toString());
+      _bbControllers[level.id] = TextEditingController(text: level.bigBlind.toString());
+      _anteControllers[level.id] = TextEditingController(text: level.ante.toString());
+    }
+  }
+
+  // すべてのコントローラーを破棄するヘルパーメソッド
+  void _disposeControllers() {
+    for (final controller in _durationControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _sbControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _bbControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _anteControllers.values) {
+      controller.dispose();
+    }
+    _durationControllers.clear();
+    _sbControllers.clear();
+    _bbControllers.clear();
+    _anteControllers.clear();
+  }
+
+  @override
+  void dispose() {
+    _tournamentNameController.dispose();
+    _disposeControllers(); // すべてのコントローラーを破棄
+    super.dispose();
+  }
+
   /// ブラインドレベルを追加する
   void _addBlindLevel({bool isBreak = false}) {
+    final newLevel = BlindLevel(
+      id: UniqueKey().toString(), // ユニークなIDを生成
+      smallBlind: isBreak ? 0 : 100,
+      bigBlind: isBreak ? 0 : 200,
+      ante: isBreak ? 0 : 0,
+      durationMinutes: isBreak ? 10 : 15,
+      isBreak: isBreak,
+    );
     setState(() {
-      _currentLevels.add(BlindLevel(
-        id: UniqueKey().toString(), // ユニークなIDを生成
-        smallBlind: isBreak ? 0 : 100,
-        bigBlind: isBreak ? 0 : 200,
-        ante: isBreak ? 0 : 0,
-        durationMinutes: isBreak ? 10 : 15,
-        isBreak: isBreak,
-      ));
+      _currentLevels.add(newLevel);
+      // 新しいレベルに対応するコントローラーを作成
+      _durationControllers[newLevel.id] = TextEditingController(text: newLevel.durationMinutes.toString());
+      _sbControllers[newLevel.id] = TextEditingController(text: newLevel.smallBlind.toString());
+      _bbControllers[newLevel.id] = TextEditingController(text: newLevel.bigBlind.toString());
+      _anteControllers[newLevel.id] = TextEditingController(text: newLevel.ante.toString());
     });
   }
 
   /// ブラインドレベルを削除する
   void _deleteBlindLevel(String id) {
     setState(() {
-      _currentLevels.removeWhere((level) => level.id == id);
+      _currentLevels.removeWhere((level) {
+        if (level.id == id) {
+          // 削除されるレベルに対応するコントローラーを破棄
+          _durationControllers[id]?.dispose();
+          _sbControllers[id]?.dispose();
+          _bbControllers[id]?.dispose();
+          _anteControllers[id]?.dispose();
+          _durationControllers.remove(id);
+          _sbControllers.remove(id);
+          _bbControllers.remove(id);
+          _anteControllers.remove(id);
+          return true;
+        }
+        return false;
+      });
     });
   }
 
   /// 設定を保存する
   Future<void> _saveTournamentSettings() async {
     if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
+      // フォームの現在の値をモデルに保存するために、コントローラーの値をモデルに反映させる
+      for (final level in _currentLevels) {
+        level.durationMinutes = int.tryParse(_durationControllers[level.id]?.text ?? '0') ?? 0;
+        level.smallBlind = int.tryParse(_sbControllers[level.id]?.text ?? '0') ?? 0;
+        level.bigBlind = int.tryParse(_bbControllers[level.id]?.text ?? '0') ?? 0;
+        level.ante = int.tryParse(_anteControllers[level.id]?.text ?? '0') ?? 0;
+      }
+
       final settingsService = Provider.of<SettingsService>(context, listen: false);
       final timerService = Provider.of<TimerService>(context, listen: false);
 
@@ -88,7 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await settingsService.deleteSettings(_originalSettingName!);
       }
 
-      await settingsService.saveSettings(newSettings);
+      await settingsService.saveSettings(newSettings); // saveSettings内でlastUsedSettingNameも更新される
 
       // 保存した設定をタイマーにロード
       timerService.initializeTimer(newSettings);
@@ -168,12 +273,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (selectedSettingName != null) {
       final loadedSettings =
-          await settingsService.loadSettings(selectedSettingName);
+          await settingsService.loadSettings(selectedSettingName); // loadSettings内でlastUsedSettingNameも更新される
       if (loadedSettings != null) {
         setState(() {
           _tournamentNameController.text = loadedSettings.name;
           _currentLevels = List.from(loadedSettings.levels); // ディープコピー
           _originalSettingName = loadedSettings.name;
+          _initControllers(); // ロードした設定でコントローラーを再初期化
         });
         Provider.of<TimerService>(context, listen: false).initializeTimer(loadedSettings);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -275,6 +381,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       }
                       final item = _currentLevels.removeAt(oldIndex);
                       _currentLevels.insert(newIndex, item);
+                      // 並べ替え後もコントローラーの状態は維持されるため、再初期化は不要
+                      // ただし、もしコントローラーとモデルの同期が取れていない場合は
+                      // ここで_initControllers()を呼び出すことも検討するが、
+                      // onChangedでリアルタイム更新しているため不要
                     });
                   },
                   itemBuilder: (context, index) {
@@ -316,7 +426,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             Expanded(
                               flex: 2,
                               child: TextFormField(
-                                initialValue: level.durationMinutes.toString(),
+                                controller: _durationControllers[level.id], // コントローラーを使用
                                 decoration: const InputDecoration(
                                   isDense: true, // 高さを詰める
                                   contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
@@ -329,8 +439,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   }
                                   return null;
                                 },
-                                onSaved: (value) {
-                                  level.durationMinutes = int.parse(value!);
+                                onChanged: (value) { // 入力時にモデルを更新
+                                  level.durationMinutes = int.tryParse(value) ?? 0;
                                 },
                               ),
                             ),
@@ -340,7 +450,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Expanded(
                                 flex: 2,
                                 child: TextFormField(
-                                  initialValue: level.smallBlind.toString(),
+                                  controller: _sbControllers[level.id], // コントローラーを使用
                                   decoration: const InputDecoration(
                                     isDense: true,
                                     contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
@@ -353,8 +463,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     }
                                     return null;
                                   },
-                                  onSaved: (value) {
-                                    level.smallBlind = int.parse(value!);
+                                  onChanged: (value) { // 入力時にモデルを更新
+                                    level.smallBlind = int.tryParse(value) ?? 0;
                                   },
                                 ),
                               ),
@@ -362,7 +472,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Expanded(
                                 flex: 2,
                                 child: TextFormField(
-                                  initialValue: level.bigBlind.toString(),
+                                  controller: _bbControllers[level.id], // コントローラーを使用
                                   decoration: const InputDecoration(
                                     isDense: true,
                                     contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
@@ -375,8 +485,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     }
                                     return null;
                                   },
-                                  onSaved: (value) {
-                                    level.bigBlind = int.parse(value!);
+                                  onChanged: (value) { // 入力時にモデルを更新
+                                    level.bigBlind = int.tryParse(value) ?? 0;
                                   },
                                 ),
                               ),
@@ -384,7 +494,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Expanded(
                                 flex: 2,
                                 child: TextFormField(
-                                  initialValue: level.ante.toString(),
+                                  controller: _anteControllers[level.id], // コントローラーを使用
                                   decoration: const InputDecoration(
                                     isDense: true,
                                     contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
@@ -397,8 +507,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     }
                                     return null;
                                   },
-                                  onSaved: (value) {
-                                    level.ante = int.parse(value!);
+                                  onChanged: (value) { // 入力時にモデルを更新
+                                    level.ante = int.tryParse(value) ?? 0;
                                   },
                                 ),
                               ),

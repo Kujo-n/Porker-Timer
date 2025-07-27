@@ -61,25 +61,41 @@ class TimerService extends ChangeNotifier {
     // SettingsServiceの非同期初期化が完了するのを待つ
     await settingsService.initializationComplete;
 
-    // デフォルト設定が保存されているか確認し、あればロード
-    if (settingsService.savedSettingNames.contains(defaultSettingName)) {
-      initialSettings = await settingsService.loadSettings(defaultSettingName);
-    } else if (settingsService.savedSettingNames.isNotEmpty) {
-      // デフォルト設定がないが、他の保存済み設定がある場合、最初のものをロード
-      initialSettings = await settingsService.loadSettings(settingsService.savedSettingNames.first);
+    // 1. 最後に使用された設定をロードしようと試みる
+    final lastUsedSettingName = settingsService.loadLastUsedSettingName();
+    if (lastUsedSettingName != null) {
+      initialSettings = await settingsService.loadSettings(lastUsedSettingName);
+      if (initialSettings != null) {
+        debugPrint('最後に使用された設定 "${lastUsedSettingName}" をロードしました。');
+      } else {
+        debugPrint('最後に使用された設定ファイルが見つからないか、ロードに失敗しました: $lastUsedSettingName');
+      }
     }
 
-    // どの設定もロードできなかった場合、基本的な新規設定を作成
+    // 2. 最後に使用された設定がロードできなかった場合、デフォルト設定をロードしようと試みる
+    if (initialSettings == null && settingsService.savedSettingNames.contains(defaultSettingName)) {
+      initialSettings = await settingsService.loadSettings(defaultSettingName);
+      if (initialSettings != null) {
+        debugPrint('デフォルト設定 "${defaultSettingName}" をロードしました。');
+      } else {
+        debugPrint('デフォルト設定ファイルが見つからないか、ロードに失敗しました: $defaultSettingName');
+      }
+    }
+
+    // 3. どの設定もロードできなかった場合、基本的な新規設定を作成
     if (initialSettings == null) {
       initialSettings = TournamentSettings(name: '新規設定', levels: []);
       // 空のレベルリストの場合、初期レベルを一つ追加
       if (initialSettings.levels.isEmpty) {
         initialSettings.levels.add(BlindLevel(id: UniqueKey().toString(), smallBlind: 100, bigBlind: 200, ante: 0, durationMinutes: 15));
       }
+      debugPrint('新しい空の設定を作成しました。');
     }
 
     // 決定した設定でTimerServiceを初期化
     initializeTimer(initialSettings);
+    // 最後にロードされた設定名を保存（新規作成された場合も含む）
+    await settingsService.saveLastUsedSettingName(initialSettings.name);
   }
 
   /// タイマーを初期化し、設定をロードする
