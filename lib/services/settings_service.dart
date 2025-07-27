@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart'; // ファイルパス取得用
 import 'dart:convert'; // JSONエンコード/デコード用
 import 'dart:io'; // ファイル操作用
+import 'package:flutter/services.dart' show rootBundle; // アセット読み込み用
 import 'package:poker_timer_app/models/tournament_settings.dart'; // TournamentSettingsモデルのインポート
 import 'package:poker_timer_app/models/blind_level.dart'; // BlindLevelモデルのインポート (TournamentSettingsが依存するため)
 
@@ -9,19 +10,33 @@ import 'package:poker_timer_app/models/blind_level.dart'; // BlindLevelモデル
 class SettingsService extends ChangeNotifier {
   static const String _settingsDirectoryName = 'tournament_settings';
   static const String _fileExtension = '.json';
+  static const String _defaultSettingsFileName = 'Default-Tabel.json';
+  static const String _defaultSettingsAssetPath = 'assets/default_settings/Default-Tabel.json';
 
   List<String> _savedSettingNames = [];
+  late Future<void> _initializationFuture; // 初期化完了を待機するためのFuture
 
   List<String> get savedSettingNames => _savedSettingNames;
 
   SettingsService() {
-    _initSettingsService();
+    _initializationFuture = _init(); // コンストラクタで非同期初期化を開始
   }
 
-  /// SettingsServiceを初期化し、既存の設定ファイル名をロードする
-  Future<void> _initSettingsService() async {
-    await _loadSavedSettingNames();
+  /// SettingsServiceの非同期初期化処理
+  Future<void> _init() async {
+    await _loadSavedSettingNames(); // まず既存の設定名をロード
+
+    // デフォルト設定ファイルが保存済み設定リストにない場合、アセットからコピーして保存
+    if (!_savedSettingNames.contains(_defaultSettingsFileName.replaceAll(_fileExtension, ''))) {
+      await _copyDefaultSettingsAsset();
+      // デフォルト設定をコピーした後、再度保存済み設定名をロードしてリストを更新
+      await _loadSavedSettingNames();
+    }
+    notifyListeners(); // 初期化完了をリスナーに通知
   }
+
+  /// SettingsServiceの初期化が完了するFutureを返す
+  Future<void> get initializationComplete => _initializationFuture;
 
   /// 設定ファイルを保存するディレクトリのパスを取得する
   Future<Directory> _getSettingsDirectory() async {
@@ -48,10 +63,22 @@ class SettingsService extends ChangeNotifier {
           .where((file) => file.path.endsWith(_fileExtension))
           .map((file) => file.path.split(Platform.pathSeparator).last.replaceAll(_fileExtension, ''))
           .toList();
-      notifyListeners();
+      // ここではnotifyListenersは呼ばない。_init()またはsave/deleteでまとめて呼ぶため。
     } catch (e) {
       debugPrint('設定名のロードに失敗しました: $e');
       _savedSettingNames = [];
+    }
+  }
+
+  /// アセットからデフォルト設定ファイルをコピーして保存する
+  Future<void> _copyDefaultSettingsAsset() async {
+    try {
+      final String jsonString = await rootBundle.loadString(_defaultSettingsAssetPath);
+      final defaultSettings = TournamentSettings.fromJson(jsonDecode(jsonString));
+      await saveSettings(defaultSettings); // デフォルト設定をファイルとして保存
+      debugPrint('デフォルト設定がコピーされました: ${_defaultSettingsFileName}');
+    } catch (e) {
+      debugPrint('デフォルト設定のコピーに失敗しました: $e');
     }
   }
 

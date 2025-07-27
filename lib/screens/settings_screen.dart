@@ -24,19 +24,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    // 設定画面を開いた際に、現在の設定名と設定内容を表示
-    // TimerServiceが初期化されるのを待つため、WidgetsBinding.instance.addPostFrameCallbackを使用
+    // 設定画面を開いた際に、現在のタイマー設定を反映する
+    // TimerServiceがmain.dartで既に初期化されていることを期待する
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final timerService = Provider.of<TimerService>(context, listen: false);
+      
+      // timerService.currentSettings は main.dart で既に初期化されているはずなので、nullチェックは不要
+      // ただし、念のためnullチェックを残しておき、もしnullの場合はデフォルトの空設定で初期化する
       if (timerService.currentSettings != null) {
         setState(() {
           _tournamentNameController.text = timerService.currentSettings!.name;
           _currentLevels = List.from(timerService.currentSettings!.levels); // ディープコピー
-          _originalSettingName = timerService.currentSettings!.name; // 元の名前を保存
+          _originalSettingName = timerService.currentSettings!.name;
         });
       } else {
-        // 設定がロードされていない場合は初期表示用に1つ追加
-        _addBlindLevel();
+        // 万が一、currentSettingsがnullの場合のフォールバック
+        setState(() {
+          _tournamentNameController.text = '新規設定';
+          _currentLevels = [];
+        });
+        _addBlindLevel(); // 少なくとも1つのレベルを追加
+        _originalSettingName = null;
       }
     });
   }
@@ -94,6 +102,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// 既存の設定をロードするダイアログを表示
   Future<void> _showLoadSettingsDialog() async {
     final settingsService = Provider.of<SettingsService>(context, listen: false);
+    // ダイアログ表示前に最新の保存済み設定リストをロード
+    await settingsService.initializationComplete; // 初期化完了を待機
+
     final selectedSettingName = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -162,7 +173,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() {
           _tournamentNameController.text = loadedSettings.name;
           _currentLevels = List.from(loadedSettings.levels); // ディープコピー
-          _originalSettingName = loadedSettings.name; // 元の名前を保存
+          _originalSettingName = loadedSettings.name;
         });
         Provider.of<TimerService>(context, listen: false).initializeTimer(loadedSettings);
         ScaffoldMessenger.of(context).showSnackBar(

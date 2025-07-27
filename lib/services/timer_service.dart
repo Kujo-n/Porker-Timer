@@ -5,6 +5,7 @@ import 'package:poker_timer_app/models/tournament_settings.dart'; // TournamentS
 import 'package:poker_timer_app/models/event_log_entry.dart'; // EventLogEntryモデルのインポート
 import 'package:poker_timer_app/services/log_service.dart'; // LogServiceのインポート
 import 'package:poker_timer_app/services/audio_service.dart'; // AudioServiceのインポート
+import 'package:poker_timer_app/services/settings_service.dart'; // SettingsServiceのインポート
 
 
 /// タイマーロジックを管理するサービス
@@ -45,6 +46,40 @@ class TimerService extends ChangeNotifier {
       return null;
     }
     return _currentSettings!.levels[_currentLevelIndex + 1];
+  }
+
+  // TimerServiceの初期化（設定ロードを含む）
+  Future<void> init(SettingsService settingsService) async {
+    // 既に設定がロードされている場合は何もしない (二重初期化防止)
+    if (_currentSettings != null) {
+      return;
+    }
+
+    TournamentSettings? initialSettings;
+    const String defaultSettingName = 'Default-Tabel';
+
+    // SettingsServiceの非同期初期化が完了するのを待つ
+    await settingsService.initializationComplete;
+
+    // デフォルト設定が保存されているか確認し、あればロード
+    if (settingsService.savedSettingNames.contains(defaultSettingName)) {
+      initialSettings = await settingsService.loadSettings(defaultSettingName);
+    } else if (settingsService.savedSettingNames.isNotEmpty) {
+      // デフォルト設定がないが、他の保存済み設定がある場合、最初のものをロード
+      initialSettings = await settingsService.loadSettings(settingsService.savedSettingNames.first);
+    }
+
+    // どの設定もロードできなかった場合、基本的な新規設定を作成
+    if (initialSettings == null) {
+      initialSettings = TournamentSettings(name: '新規設定', levels: []);
+      // 空のレベルリストの場合、初期レベルを一つ追加
+      if (initialSettings.levels.isEmpty) {
+        initialSettings.levels.add(BlindLevel(id: UniqueKey().toString(), smallBlind: 100, bigBlind: 200, ante: 0, durationMinutes: 15));
+      }
+    }
+
+    // 決定した設定でTimerServiceを初期化
+    initializeTimer(initialSettings);
   }
 
   /// タイマーを初期化し、設定をロードする
