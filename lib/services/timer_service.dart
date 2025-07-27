@@ -193,6 +193,33 @@ class TimerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 1つ前のブラインドレベルに戻る
+  void previousLevel(LogService logService, AudioService audioService) {
+    if (_currentLevelIndex > 0) {
+      _timer?.cancel(); // 現在のタイマーを停止
+      _currentLevelIndex--; // インデックスを1つ戻す
+      final prevLevel = _currentSettings!.levels[_currentLevelIndex];
+      _remainingSeconds = prevLevel.durationMinutes * 60; // 以前のレベルの時間に設定
+
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'LevelBack',
+          description:
+              '1つ前のブラインドレベルに戻りました。レベル: ${prevLevel.isBreak ? "休憩" : (currentLevelIndex + 1)}, 残り時間: ${formatDuration(_remainingSeconds)}'));
+
+      // タイマーが実行中だった場合は再開
+      if (_isRunning) {
+        _startCountdown(logService, audioService);
+      }
+      notifyListeners();
+    } else {
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'LevelBackFailed',
+          description: 'これ以上前のブラインドレベルはありません。'));
+    }
+  }
+
   /// カウントダウンを開始する内部メソッド
   void _startCountdown(LogService logService, AudioService audioService) {
     _timer?.cancel();
