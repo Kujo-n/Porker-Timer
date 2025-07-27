@@ -88,7 +88,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${newSettings.name} が保存されました。')),
       );
-      Navigator.pop(context);
     }
   }
 
@@ -229,7 +228,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
                 child: Row(
                   children: const [
-                    SizedBox(width: 40, child: Text('Lv', style: TextStyle(fontWeight: FontWeight.bold))),
+                    SizedBox(
+                      width: 80, // アイコンとテキストのスペースを確保
+                      child: Row( // アイコンとテキストを横並びにする
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          SizedBox(width: 24), // ドラッグハンドルアイコンとスペースの分を空ける
+                          Expanded( // TextをExpandedで囲む
+                            child: Text(
+                              'Lv',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis, // 必要に応じて省略
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     Expanded(flex: 2, child: Text('時間(分)', style: TextStyle(fontWeight: FontWeight.bold))),
                     Expanded(flex: 2, child: Text('SB', style: TextStyle(fontWeight: FontWeight.bold))),
                     Expanded(flex: 2, child: Text('BB', style: TextStyle(fontWeight: FontWeight.bold))),
@@ -240,6 +254,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               Expanded(
                 child: ReorderableListView.builder(
+                  // buildDefaultDragHandlesをfalseに設定し、カスタムのドラッグハンドルを使用
+                  buildDefaultDragHandles: false,
                   itemCount: _currentLevels.length,
                   onReorder: (oldIndex, newIndex) {
                     setState(() {
@@ -248,9 +264,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       }
                       final item = _currentLevels.removeAt(oldIndex);
                       _currentLevels.insert(newIndex, item);
-                      // onReorder後にsetStateが呼ばれることで、buildが再実行され、
-                      // calculatedLevelDisplaysが新しい順序で再計算される。
-                      // そのため、ここで明示的に何かを更新する必要はない。
                     });
                   },
                   itemBuilder: (context, index) {
@@ -267,12 +280,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
                         child: Row(
                           children: [
-                            // ブラインドレベル番号/Break表示
-                            SizedBox(
-                              width: 40,
-                              child: Text(
-                                levelDisplay, // 調整した表示を使用
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                            // ドラッグハンドルアイコンを最も左に配置
+                            ReorderableDragStartListener( // ここをドラッグハンドルとする
+                              index: index,
+                              child: SizedBox(
+                                width: 80, // アイコンとテキストのスペースを確保
+                                child: Row( // アイコンとテキストを横並びにする
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    const Icon(Icons.drag_handle, size: 20, color: Colors.grey), // ドラッグハンドルアイコン
+                                    const SizedBox(width: 4), // アイコンとテキストの間のスペース
+                                    Expanded( // TextをExpandedで囲む
+                                      child: Text(
+                                        levelDisplay, // 調整した表示を使用
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                        overflow: TextOverflow.ellipsis, // 必要に応じて省略
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                             // 継続時間
