@@ -11,7 +11,7 @@ class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   // コンテンツの推奨最小幅を定義
-  static const double kMinContentWidth = 460.0; // 最小幅を410.0に設定
+  static const double kMinContentWidth = 460.0; // 最小幅を460.0に設定
 
   @override
   Widget build(BuildContext context) {
@@ -50,72 +50,50 @@ class HomeScreen extends StatelessWidget {
               // 利用可能な幅が推奨最小幅より小さいか判定
               final bool needsHorizontalScroll = constraints.maxWidth < kMinContentWidth;
 
-              // タイマー表示エリアと操作ボタンのRowウィジェット
-              Widget timerAndButtonsContent = Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  // 戻るボタン
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back, size: 48),
-                    onPressed: () => timerService.previousLevel(logService, audioService),
-                    tooltip: '前のレベルに戻る',
-                  ),
-                  
-                  // タイマー表示 (開始/一時停止切り替え)
-                  GestureDetector(
-                    onTap: () {
-                      if (timerService.isRunning) {
-                        timerService.pauseTimer(logService);
-                      } else {
-                        timerService.resumeTimer(logService, audioService);
-                      }
-                    },
-                    child: Card(
-                      elevation: 8,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              timerService.formatDuration(timerService.remainingSeconds),
-                              style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.deepPurple),
-                            ),
-                            const SizedBox(height: 10),
-                            Icon(
-                              timerService.isRunning ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                              size: 40,
-                              color: timerService.isRunning ? Colors.orange : Colors.green,
-                            ),
-                          ],
+              // タイマー表示エリア (開始/一時停止切り替え)
+              Widget timerDisplayContent = GestureDetector(
+                onTap: () {
+                  if (timerService.isRunning) {
+                    timerService.pauseTimer(logService);
+                  } else {
+                    timerService.resumeTimer(logService, audioService);
+                  }
+                },
+                child: Card(
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          timerService.formatDuration(timerService.remainingSeconds),
+                          style: const TextStyle(fontSize: 80, fontWeight: FontWeight.bold, color: Colors.deepPurple),
                         ),
-                      ),
+                        const SizedBox(height: 10),
+                        Icon(
+                          timerService.isRunning ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                          size: 40,
+                          color: timerService.isRunning ? Colors.orange : Colors.green,
+                        ),
+                      ],
                     ),
                   ),
-
-                  // 進むボタン (スキップ)
-                  IconButton(
-                    icon: const Icon(Icons.arrow_forward, size: 48),
-                    onPressed: () => timerService.skipLevel(logService, audioService),
-                    tooltip: '次のレベルに進む',
-                  ),
-                ],
+                ),
               );
 
               // 必要に応じて水平スクロール可能なウィジェットでラップ
               if (needsHorizontalScroll) {
-                // SingleChildScrollViewでラップし、SizedBoxで最小幅を確保
-                timerAndButtonsContent = SingleChildScrollView(
+                timerDisplayContent = SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: SizedBox(
                     width: kMinContentWidth, // 最小幅を適用
-                    child: timerAndButtonsContent,
+                    child: Center(child: timerDisplayContent), // 中央に配置
                   ),
                 );
               } else {
-                // スクロールが不要な場合は中央に配置
-                timerAndButtonsContent = Center(child: timerAndButtonsContent);
+                timerDisplayContent = Center(child: timerDisplayContent);
               }
 
               return SingleChildScrollView( // 全体を垂直スクロール可能にする (コンテンツが縦に長くなった場合のため)
@@ -149,9 +127,38 @@ class HomeScreen extends StatelessWidget {
                         ),
                       ),
 
-                      // タイマー表示エリアと操作ボタン (条件付きスクロールまたは中央配置)
-                      timerAndButtonsContent,
+                      // タイマー表示エリア (条件付きスクロールまたは中央配置)
+                      timerDisplayContent,
 
+                      const SizedBox(height: 20),
+
+                      // 戻る/ブラインドリセット/進むボタン
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildIconButton(
+                            icon: Icons.arrow_back,
+                            onPressed: timerService.currentLevelIndex == 0
+                                ? null
+                                : () => timerService.previousLevel(logService, audioService),
+                            tooltip: '前のレベルに戻る',
+                          ),
+                          _buildIconButton(
+                            icon: Icons.replay, // ブラインドリセットアイコン
+                            onPressed: timerService.currentSettings == null || timerService.currentSettings!.levels.isEmpty
+                                ? null
+                                : () => timerService.resetCurrentLevelTime(logService, audioService), // audioServiceを渡す
+                            tooltip: '現在のレベルの時間をリセット',
+                          ),
+                          _buildIconButton(
+                            icon: Icons.arrow_forward,
+                            onPressed: timerService.nextLevel == null
+                                ? null
+                                : () => timerService.skipLevel(logService, audioService),
+                            tooltip: '次のレベルに進む',
+                          ),
+                        ],
+                      ),
 
                       const SizedBox(height: 20),
 
@@ -183,15 +190,14 @@ class HomeScreen extends StatelessWidget {
 
                       const SizedBox(height: 20),
 
-                      // リセットボタン
-                      ElevatedButton.icon(
-                        onPressed: () => timerService.resetTimer(logService),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('リセット'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent,
-                          foregroundColor: Colors.white,
-                        ),
+                      // トーナメント全体のリセットボタン
+                      _buildIconButton(
+                        icon: Icons.refresh,
+                        onPressed: timerService.currentSettings == null
+                            ? null
+                            : () => timerService.resetTimer(logService),
+                        tooltip: 'トーナメントをリセット',
+                        isPrimary: true, // リセットボタンを目立たせる
                       ),
                     ],
                   ),
@@ -201,6 +207,30 @@ class HomeScreen extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+
+  // アイコンボタンを生成するヘルパーウィジェット
+  Widget _buildIconButton({
+    required IconData icon,
+    VoidCallback? onPressed,
+    String? tooltip,
+    bool isPrimary = false, // 主要なボタンかどうか
+  }) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: onPressed == null
+            ? Colors.grey[700] // 無効な状態の色
+            : isPrimary ? Colors.redAccent : Colors.deepPurple, // 色を調整
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.all(15), // アイコンのみなのでパディングを調整
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        elevation: 5,
+        shadowColor: Colors.black,
+        minimumSize: const Size(60, 60), // ボタンの最小サイズを設定
+      ),
+      child: Icon(icon, size: 30), // アイコンサイズを調整
     );
   }
 }

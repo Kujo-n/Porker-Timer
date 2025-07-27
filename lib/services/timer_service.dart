@@ -160,7 +160,7 @@ class TimerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// タイマーをリセットする
+  /// タイマーをリセットする (トーナメント全体のリセット)
   void resetTimer(LogService logService) {
     _timer?.cancel();
     _isRunning = false;
@@ -177,6 +177,35 @@ class TimerService extends ChangeNotifier {
         description: 'タイマーがリセットされました。'));
     notifyListeners();
   }
+
+  /// 現在のレベルの時間をリセットする (ブラインドリセット)
+  void resetCurrentLevelTime(LogService logService, AudioService audioService) { // audioServiceを追加
+    if (_currentSettings == null || _currentSettings!.levels.isEmpty) {
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'BlindResetFailed',
+          description: 'ブラインドリセット失敗: 設定がありません。'));
+      return;
+    }
+    if (_currentLevelIndex < _currentSettings!.levels.length) {
+      _remainingSeconds = _currentSettings!.levels[_currentLevelIndex].durationMinutes * 60;
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'BlindReset',
+          description: '現在のブラインドレベルの時間がリセットされました。残り時間: ${formatDuration(_remainingSeconds)}'));
+      // タイマーが実行中であれば、時間をリセットした後に再開
+      if (_isRunning) {
+        _startCountdown(logService, audioService);
+      }
+      notifyListeners();
+    } else {
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'BlindResetFailed',
+          description: 'ブラインドリセット失敗: 無効なレベルインデックスです。'));
+    }
+  }
+
 
   /// 現在のレベルをスキップし、次のレベルへ移行する
   void skipLevel(LogService logService, AudioService audioService) {
