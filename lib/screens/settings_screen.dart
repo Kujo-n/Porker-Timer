@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:poker_timer_app/models/blind_level.dart'; // BlindLevelモデルのインポート
 import 'package:poker_timer_app/models/tournament_settings.dart'; // TournamentSettingsモデルのインポート
 import 'package:poker_timer_app/services/settings_service.dart'; // SettingsServiceのインポート
@@ -18,15 +19,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tournamentNameController = TextEditingController();
   List<BlindLevel> _currentLevels = [];
-  bool _isEditingExisting = false;
-  String? _originalSettingName;
+  String? _originalSettingName; // ロードされた設定の元の名前を保持
 
   @override
   void initState() {
     super.initState();
-    // 新規作成時は空のリストから開始
-    _currentLevels = [];
-    _addBlindLevel(); // 初期表示用に1つ追加
+    // 設定画面を開いた際に、現在の設定名と設定内容を表示
+    // TimerServiceが初期化されるのを待つため、WidgetsBinding.instance.addPostFrameCallbackを使用
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final timerService = Provider.of<TimerService>(context, listen: false);
+      if (timerService.currentSettings != null) {
+        setState(() {
+          _tournamentNameController.text = timerService.currentSettings!.name;
+          _currentLevels = List.from(timerService.currentSettings!.levels); // ディープコピー
+          _originalSettingName = timerService.currentSettings!.name; // 元の名前を保存
+        });
+      } else {
+        // 設定がロードされていない場合は初期表示用に1つ追加
+        _addBlindLevel();
+      }
+    });
   }
 
   /// ブラインドレベルを追加する
@@ -61,6 +73,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         name: _tournamentNameController.text,
         levels: _currentLevels,
       );
+
+      // 元の名前と現在の名前が異なる場合、元の設定を削除して新しい名前で保存（別名保存）
+      // 同じ名前の場合は上書き保存
+      if (_originalSettingName != null && _originalSettingName != newSettings.name) {
+        await settingsService.deleteSettings(_originalSettingName!);
+      }
 
       await settingsService.saveSettings(newSettings);
 
@@ -144,9 +162,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (loadedSettings != null) {
         setState(() {
           _tournamentNameController.text = loadedSettings.name;
-          _currentLevels = loadedSettings.levels;
-          _isEditingExisting = true;
-          _originalSettingName = loadedSettings.name;
+          _currentLevels = List.from(loadedSettings.levels); // ディープコピー
+          _originalSettingName = loadedSettings.name; // 元の名前を保存
         });
         Provider.of<TimerService>(context, listen: false).initializeTimer(loadedSettings);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -195,6 +212,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
               const SizedBox(height: 20),
+              // テーブルヘッダー
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                child: Row(
+                  children: const [
+                    SizedBox(width: 40, child: Text('Lv', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('時間(分)', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('SB', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('BB', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('Ante', style: TextStyle(fontWeight: FontWeight.bold))),
+                    SizedBox(width: 48), // 削除ボタンのスペース
+                  ],
+                ),
+              ),
               Expanded(
                 child: ReorderableListView.builder(
                   itemCount: _currentLevels.length,
@@ -211,103 +242,126 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     final level = _currentLevels[index];
                     return Card(
                       key: ValueKey(level.id), // ReorderableListViewにはkeyが必須
-                      margin: const EdgeInsets.symmetric(vertical: 8.0),
-                      elevation: 3,
+                      margin: const EdgeInsets.symmetric(vertical: 4.0),
+                      elevation: 1,
                       child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                        child: Row(
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  level.isBreak ? '休憩レベル' : 'レベル ${index + 1}',
-                                  style: const TextStyle(
-                                      fontSize: 18, fontWeight: FontWeight.bold),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () => _deleteBlindLevel(level.id),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            TextFormField(
-                              initialValue: level.durationMinutes.toString(),
-                              decoration: InputDecoration(
-                                labelText: level.isBreak
-                                    ? '休憩時間 (分)'
-                                    : '継続時間 (分)',
-                                border: const OutlineInputBorder(),
+                            // ブラインドレベル番号/Break表示
+                            SizedBox(
+                              width: 40,
+                              child: Text(
+                                level.isBreak ? 'Break' : '${index + 1}',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
-                              keyboardType: TextInputType.number,
-                              validator: (value) {
-                                if (value == null || int.tryParse(value) == null) {
-                                  return '有効な時間を入力してください';
-                                }
-                                return null;
-                              },
-                              onSaved: (value) {
-                                level.durationMinutes = int.parse(value!);
-                              },
                             ),
+                            // 継続時間
+                            Expanded(
+                              flex: 2,
+                              child: TextFormField(
+                                initialValue: level.durationMinutes.toString(),
+                                decoration: const InputDecoration(
+                                  isDense: true, // 高さを詰める
+                                  contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                  border: OutlineInputBorder(),
+                                ),
+                                keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  if (value == null || int.tryParse(value) == null || int.parse(value!) <= 0) {
+                                    return ''; // エラーメッセージは簡潔に
+                                  }
+                                  return null;
+                                },
+                                onSaved: (value) {
+                                  level.durationMinutes = int.parse(value!);
+                                },
+                              ),
+                            ),
+                            // Small Blind, Big Blind, Ante
                             if (!level.isBreak) ...[
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: level.smallBlind.toString(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Small Blind',
-                                  border: OutlineInputBorder(),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  initialValue: level.smallBlind.toString(),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value == null || int.tryParse(value) == null || int.parse(value!) < 0) {
+                                      return '';
+                                    }
+                                    return null;
+                                  },
+                                  onSaved: (value) {
+                                    level.smallBlind = int.parse(value!);
+                                  },
                                 ),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  if (value == null || int.tryParse(value) == null) {
-                                    return '有効な値を入力してください';
-                                  }
-                                  return null;
-                                },
-                                onSaved: (value) {
-                                  level.smallBlind = int.parse(value!);
-                                },
                               ),
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: level.bigBlind.toString(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Big Blind',
-                                  border: OutlineInputBorder(),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  initialValue: level.bigBlind.toString(),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value == null || int.tryParse(value) == null || int.parse(value!) < 0) {
+                                      return '';
+                                    }
+                                    return null;
+                                  },
+                                  onSaved: (value) {
+                                    level.bigBlind = int.parse(value!);
+                                  },
                                 ),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  if (value == null || int.tryParse(value) == null) {
-                                    return '有効な値を入力してください';
-                                  }
-                                  return null;
-                                },
-                                onSaved: (value) {
-                                  level.bigBlind = int.parse(value!);
-                                },
                               ),
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: level.ante.toString(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Ante',
-                                  border: OutlineInputBorder(),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  initialValue: level.ante.toString(),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value == null || int.tryParse(value) == null || int.parse(value!) < 0) {
+                                      return '';
+                                    }
+                                    return null;
+                                  },
+                                  onSaved: (value) {
+                                    level.ante = int.parse(value!);
+                                  },
                                 ),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  if (value == null || int.tryParse(value) == null) {
-                                    return '有効な値を入力してください';
-                                  }
-                                  return null;
-                                },
-                                onSaved: (value) {
-                                  level.ante = int.parse(value!);
-                                },
                               ),
+                            ] else ...[
+                              // 休憩レベルの場合はSB, BB, Anteの入力フィールドを非表示にする
+                              const Expanded(flex: 2, child: SizedBox()),
+                              const SizedBox(width: 8),
+                              const Expanded(flex: 2, child: SizedBox()),
+                              const SizedBox(width: 8),
+                              const Expanded(flex: 2, child: SizedBox()),
                             ],
+                            // 削除ボタン
+                            SizedBox(
+                              width: 48,
+                              child: IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () => _deleteBlindLevel(level.id),
+                              ),
+                            ),
                           ],
                         ),
                       ),
