@@ -5,6 +5,7 @@ import 'package:poker_timer_app/models/tournament_settings.dart'; // TournamentS
 import 'package:poker_timer_app/models/event_log_entry.dart'; // EventLogEntryモデルのインポート
 import 'package:poker_timer_app/services/log_service.dart'; // LogServiceのインポート
 import 'package:poker_timer_app/services/audio_service.dart'; // AudioServiceのインポート
+import 'package:poker_timer_app/services/settings_service.dart'; // SettingsServiceのインポート
 
 
 /// タイマーロジックを管理するサービス
@@ -45,6 +46,56 @@ class TimerService extends ChangeNotifier {
       return null;
     }
     return _currentSettings!.levels[_currentLevelIndex + 1];
+  }
+
+  // TimerServiceの初期化（設定ロードを含む）
+  Future<void> init(SettingsService settingsService) async {
+    // 既に設定がロードされている場合は何もしない (二重初期化防止)
+    if (_currentSettings != null) {
+      return;
+    }
+
+    TournamentSettings? initialSettings;
+    const String defaultSettingName = 'Default-Tabel';
+
+    // SettingsServiceの非同期初期化が完了するのを待つ
+    await settingsService.initializationComplete;
+
+    // 1. 最後に使用された設定をロードしようと試みる
+    final lastUsedSettingName = settingsService.loadLastUsedSettingName();
+    if (lastUsedSettingName != null) {
+      initialSettings = await settingsService.loadSettings(lastUsedSettingName);
+      if (initialSettings != null) {
+        debugPrint('最後に使用された設定 "${lastUsedSettingName}" をロードしました。');
+      } else {
+        debugPrint('最後に使用された設定ファイルが見つからないか、ロードに失敗しました: $lastUsedSettingName');
+      }
+    }
+
+    // 2. 最後に使用された設定がロードできなかった場合、デフォルト設定をロードしようと試みる
+    if (initialSettings == null && settingsService.savedSettingNames.contains(defaultSettingName)) {
+      initialSettings = await settingsService.loadSettings(defaultSettingName);
+      if (initialSettings != null) {
+        debugPrint('デフォルト設定 "${defaultSettingName}" をロードしました。');
+      } else {
+        debugPrint('デフォルト設定ファイルが見つからないか、ロードに失敗しました: $defaultSettingName');
+      }
+    }
+
+    // 3. どの設定もロードできなかった場合、基本的な新規設定を作成
+    if (initialSettings == null) {
+      initialSettings = TournamentSettings(name: '新規設定', levels: []);
+      // 空のレベルリストの場合、初期レベルを一つ追加
+      if (initialSettings.levels.isEmpty) {
+        initialSettings.levels.add(BlindLevel(id: UniqueKey().toString(), smallBlind: 100, bigBlind: 200, ante: 0, durationMinutes: 15));
+      }
+      debugPrint('新しい空の設定を作成しました。');
+    }
+
+    // 決定した設定でTimerServiceを初期化
+    initializeTimer(initialSettings);
+    // 最後にロードされた設定名を保存（新規作成された場合も含む）
+    await settingsService.saveLastUsedSettingName(initialSettings.name);
   }
 
   /// タイマーを初期化し、設定をロードする
@@ -109,7 +160,7 @@ class TimerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// タイマーをリセットする
+  /// タイマーをリセットする (トーナメント全体のリセット)
   void resetTimer(LogService logService) {
     _timer?.cancel();
     _isRunning = false;
@@ -127,6 +178,35 @@ class TimerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 現在のレベルの時間をリセットする (ブラインドリセット)
+  void resetCurrentLevelTime(LogService logService, AudioService audioService) { // audioServiceを追加
+    if (_currentSettings == null || _currentSettings!.levels.isEmpty) {
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'BlindResetFailed',
+          description: 'ブラインドリセット失敗: 設定がありません。'));
+      return;
+    }
+    if (_currentLevelIndex < _currentSettings!.levels.length) {
+      _remainingSeconds = _currentSettings!.levels[_currentLevelIndex].durationMinutes * 60;
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'BlindReset',
+          description: '現在のブラインドレベルの時間がリセットされました。残り時間: ${formatDuration(_remainingSeconds)}'));
+      // タイマーが実行中であれば、時間をリセットした後に再開
+      if (_isRunning) {
+        _startCountdown(logService, audioService);
+      }
+      notifyListeners();
+    } else {
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'BlindResetFailed',
+          description: 'ブラインドリセット失敗: 無効なレベルインデックスです。'));
+    }
+  }
+
+
   /// 現在のレベルをスキップし、次のレベルへ移行する
   void skipLevel(LogService logService, AudioService audioService) {
     _timer?.cancel();
@@ -142,6 +222,33 @@ class TimerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 1つ前のブラインドレベルに戻る
+  void previousLevel(LogService logService, AudioService audioService) {
+    if (_currentLevelIndex > 0) {
+      _timer?.cancel(); // 現在のタイマーを停止
+      _currentLevelIndex--; // インデックスを1つ戻す
+      final prevLevel = _currentSettings!.levels[_currentLevelIndex];
+      _remainingSeconds = prevLevel.durationMinutes * 60; // 以前のレベルの時間に設定
+
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'LevelBack',
+          description:
+              '1つ前のブラインドレベルに戻りました。レベル: ${prevLevel.isBreak ? "休憩" : (currentLevelIndex + 1)}, 残り時間: ${formatDuration(_remainingSeconds)}'));
+
+      // タイマーが実行中だった場合は再開
+      if (_isRunning) {
+        _startCountdown(logService, audioService);
+      }
+      notifyListeners();
+    } else {
+      logService.addLog(EventLogEntry(
+          timestamp: DateTime.now(),
+          eventType: 'LevelBackFailed',
+          description: 'これ以上前のブラインドレベルはありません。'));
+    }
+  }
+
   /// カウントダウンを開始する内部メソッド
   void _startCountdown(LogService logService, AudioService audioService) {
     _timer?.cancel();
@@ -150,6 +257,15 @@ class TimerService extends ChangeNotifier {
         _remainingSeconds--;
       } else {
         _timer?.cancel();
+        // ★ ここで音声再生（タイマーが0になった瞬間のみ）
+        final nextLevelValue = nextLevel; // ←変数名を変更
+        if (nextLevelValue != null) {
+          if (nextLevelValue.isBreak) {
+            audioService.playNotificationSound();
+          } else {
+            audioService.playNotificationSound();
+          }
+        }
         _moveToNextLevel(logService, audioService);
         if (_isRunning) {
           _startCountdown(logService, audioService);
@@ -170,14 +286,12 @@ class TimerService extends ChangeNotifier {
 
       String eventDescription;
       if (newLevel.isBreak) {
-        audioService.playNotificationSound();
         eventDescription = '休憩が始まりました。休憩時間: ${newLevel.durationMinutes}分';
         logService.addLog(EventLogEntry(
             timestamp: DateTime.now(),
             eventType: 'BreakStart',
             description: eventDescription));
       } else {
-        audioService.playNotificationSound();
         eventDescription =
             'ブラインドレベルがSmall Blind: ${newLevel.smallBlind}, Big Blind: ${newLevel.bigBlind}, Ante: ${newLevel.ante} に上がりました。';
         logService.addLog(EventLogEntry(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:poker_timer_app/models/blind_level.dart'; // BlindLevelモデルのインポート
 import 'package:poker_timer_app/models/tournament_settings.dart'; // TournamentSettingsモデルのインポート
 import 'package:poker_timer_app/services/settings_service.dart'; // SettingsServiceのインポート
@@ -17,43 +18,165 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _tournamentNameController = TextEditingController();
+
+  // 各BlindLevelの各フィールドに対応するTextEditingControllerを管理するマップ
+  final Map<String, TextEditingController> _durationControllers = {};
+  final Map<String, TextEditingController> _sbControllers = {};
+  final Map<String, TextEditingController> _bbControllers = {};
+  final Map<String, TextEditingController> _anteControllers = {};
+
   List<BlindLevel> _currentLevels = [];
-  bool _isEditingExisting = false;
-  String? _originalSettingName;
+  String? _originalSettingName; // ロードされた設定の元の名前を保持
 
   @override
   void initState() {
     super.initState();
-    // 新規作成時は空のリストから開始
-    _currentLevels = [];
-    _addBlindLevel(); // 初期表示用に1つ追加
+    // 設定画面を開いた際に、現在のタイマー設定を反映する
+    // TimerServiceがmain.dartで既に初期化されていることを期待する
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final timerService = Provider.of<TimerService>(context, listen: false);
+      final settingsService = Provider.of<SettingsService>(context, listen: false);
+
+      // SettingsServiceの非同期初期化が完了するのを待つ
+      await settingsService.initializationComplete;
+
+      TournamentSettings? loadedSettings;
+
+      // 1. TimerServiceに現在の設定がロードされているか確認
+      if (timerService.currentSettings != null) {
+        loadedSettings = timerService.currentSettings;
+      } else {
+        // 2. TimerServiceに設定がない場合、保存されたデフォルト設定または最初の保存済み設定をロード
+        const String defaultSettingName = 'Default-Tabel'; // デフォルト設定ファイルの名前（拡張子なし）
+
+        if (settingsService.savedSettingNames.contains(defaultSettingName)) {
+          // デフォルト設定が保存されている場合、それをロード
+          loadedSettings = await settingsService.loadSettings(defaultSettingName);
+        } else if (settingsService.savedSettingNames.isNotEmpty) {
+          // デフォルト設定がないが、他の保存済み設定がある場合、最初のものをロード
+          loadedSettings = await settingsService.loadSettings(settingsService.savedSettingNames.first);
+        }
+      }
+
+      // 3. どの設定もロードできなかった場合、新規のデフォルト設定を作成
+      loadedSettings ??= TournamentSettings(name: '新規設定', levels: []);
+
+      // UIを更新
+      setState(() {
+        // loadedSettingsはここで非nullであることが保証される
+        _tournamentNameController.text = loadedSettings!.name;
+        _currentLevels = List.from(loadedSettings.levels); // ディープコピー
+        _originalSettingName = loadedSettings.name;
+        _initControllers(); // コントローラーを初期化
+      });
+
+      // TimerServiceに、現在UIに表示されている設定を初期化する
+      timerService.initializeTimer(loadedSettings!);
+
+      // もしロードされた設定（または新規作成された設定）にレベルが一つもなければ、初期レベルを一つ追加
+      if (_currentLevels.isEmpty) {
+        _addBlindLevel();
+      }
+
+      // もし設定名が「新規設定」で、それが保存されたものではない場合、_originalSettingNameをnullにする
+      // これにより、「新規設定」として保存しようとした際に別名保存ではなく新規保存となる
+      if (_tournamentNameController.text == '新規設定' && _originalSettingName == '新規設定') {
+        _originalSettingName = null;
+      }
+    });
+  }
+
+  // コントローラーを初期化するヘルパーメソッド
+  void _initControllers() {
+    _disposeControllers(); // 既存のコントローラーを破棄
+
+    for (final level in _currentLevels) {
+      _durationControllers[level.id] = TextEditingController(text: level.durationMinutes.toString());
+      _sbControllers[level.id] = TextEditingController(text: level.smallBlind.toString());
+      _bbControllers[level.id] = TextEditingController(text: level.bigBlind.toString());
+      _anteControllers[level.id] = TextEditingController(text: level.ante.toString());
+    }
+  }
+
+  // すべてのコントローラーを破棄するヘルパーメソッド
+  void _disposeControllers() {
+    for (final controller in _durationControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _sbControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _bbControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _anteControllers.values) {
+      controller.dispose();
+    }
+    _durationControllers.clear();
+    _sbControllers.clear();
+    _bbControllers.clear();
+    _anteControllers.clear();
+  }
+
+  @override
+  void dispose() {
+    _tournamentNameController.dispose();
+    _disposeControllers(); // すべてのコントローラーを破棄
+    super.dispose();
   }
 
   /// ブラインドレベルを追加する
   void _addBlindLevel({bool isBreak = false}) {
+    final newLevel = BlindLevel(
+      id: UniqueKey().toString(), // ユニークなIDを生成
+      smallBlind: isBreak ? 0 : 100,
+      bigBlind: isBreak ? 0 : 200,
+      ante: isBreak ? 0 : 0,
+      durationMinutes: isBreak ? 10 : 15,
+      isBreak: isBreak,
+    );
     setState(() {
-      _currentLevels.add(BlindLevel(
-        id: UniqueKey().toString(), // ユニークなIDを生成
-        smallBlind: isBreak ? 0 : 100,
-        bigBlind: isBreak ? 0 : 200,
-        ante: isBreak ? 0 : 0,
-        durationMinutes: isBreak ? 10 : 15,
-        isBreak: isBreak,
-      ));
+      _currentLevels.add(newLevel);
+      // 新しいレベルに対応するコントローラーを作成
+      _durationControllers[newLevel.id] = TextEditingController(text: newLevel.durationMinutes.toString());
+      _sbControllers[newLevel.id] = TextEditingController(text: newLevel.smallBlind.toString());
+      _bbControllers[newLevel.id] = TextEditingController(text: newLevel.bigBlind.toString());
+      _anteControllers[newLevel.id] = TextEditingController(text: newLevel.ante.toString());
     });
   }
 
   /// ブラインドレベルを削除する
   void _deleteBlindLevel(String id) {
     setState(() {
-      _currentLevels.removeWhere((level) => level.id == id);
+      _currentLevels.removeWhere((level) {
+        if (level.id == id) {
+          // 削除されるレベルに対応するコントローラーを破棄
+          _durationControllers[id]?.dispose();
+          _sbControllers[id]?.dispose();
+          _bbControllers[id]?.dispose();
+          _anteControllers[id]?.dispose();
+          _durationControllers.remove(id);
+          _sbControllers.remove(id);
+          _bbControllers.remove(id);
+          _anteControllers.remove(id);
+          return true;
+        }
+        return false;
+      });
     });
   }
 
   /// 設定を保存する
   Future<void> _saveTournamentSettings() async {
     if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
+      // フォームの現在の値をモデルに保存するために、コントローラーの値をモデルに反映させる
+      for (final level in _currentLevels) {
+        level.durationMinutes = int.tryParse(_durationControllers[level.id]?.text ?? '0') ?? 0;
+        level.smallBlind = int.tryParse(_sbControllers[level.id]?.text ?? '0') ?? 0;
+        level.bigBlind = int.tryParse(_bbControllers[level.id]?.text ?? '0') ?? 0;
+        level.ante = int.tryParse(_anteControllers[level.id]?.text ?? '0') ?? 0;
+      }
+
       final settingsService = Provider.of<SettingsService>(context, listen: false);
       final timerService = Provider.of<TimerService>(context, listen: false);
 
@@ -62,7 +185,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         levels: _currentLevels,
       );
 
-      await settingsService.saveSettings(newSettings);
+      // 元の名前と現在の名前が異なる場合、元の設定を削除して新しい名前で保存（別名保存）
+      // 同じ名前の場合は上書き保存
+      if (_originalSettingName != null && _originalSettingName != newSettings.name) {
+        await settingsService.deleteSettings(_originalSettingName!);
+      }
+
+      await settingsService.saveSettings(newSettings); // saveSettings内でlastUsedSettingNameも更新される
 
       // 保存した設定をタイマーにロード
       timerService.initializeTimer(newSettings);
@@ -70,13 +199,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${newSettings.name} が保存されました。')),
       );
-      Navigator.pop(context);
     }
   }
 
   /// 既存の設定をロードするダイアログを表示
   Future<void> _showLoadSettingsDialog() async {
     final settingsService = Provider.of<SettingsService>(context, listen: false);
+    // ダイアログ表示前に最新の保存済み設定リストをロード
+    await settingsService.initializationComplete; // 初期化完了を待機
+
     final selectedSettingName = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -140,13 +271,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (selectedSettingName != null) {
       final loadedSettings =
-          await settingsService.loadSettings(selectedSettingName);
+          await settingsService.loadSettings(selectedSettingName); // loadSettings内でlastUsedSettingNameも更新される
       if (loadedSettings != null) {
         setState(() {
           _tournamentNameController.text = loadedSettings.name;
-          _currentLevels = loadedSettings.levels;
-          _isEditingExisting = true;
+          _currentLevels = List.from(loadedSettings.levels); // ディープコピー
           _originalSettingName = loadedSettings.name;
+          _initControllers(); // ロードした設定でコントローラーを再初期化
         });
         Provider.of<TimerService>(context, listen: false).initializeTimer(loadedSettings);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -159,6 +290,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioService>(context);
+
+    // ブラインドレベルの表示文字列を事前に計算し、マップに保存する
+    final Map<String, String> calculatedLevelDisplays = {};
+    int tempBlindLevelCounter = 0;
+    for (final level in _currentLevels) {
+      if (level.isBreak) {
+        calculatedLevelDisplays[level.id] = 'Break';
+      } else {
+        tempBlindLevelCounter++;
+        calculatedLevelDisplays[level.id] = '$tempBlindLevelCounter';
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -195,8 +338,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
               const SizedBox(height: 20),
+              // テーブルヘッダー
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                child: Row(
+                  children: const [
+                    SizedBox(
+                      width: 80, // アイコンとテキストのスペースを確保
+                      child: Row( // アイコンとテキストを横並びにする
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          SizedBox(width: 24), // ドラッグハンドルアイコンとスペースの分を空ける
+                          Expanded( // TextをExpandedで囲む
+                            child: Text(
+                              'Lv',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis, // 必要に応じて省略
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(flex: 2, child: Text('時間(分)', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('SB', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('BB', style: TextStyle(fontWeight: FontWeight.bold))),
+                    Expanded(flex: 2, child: Text('Ante', style: TextStyle(fontWeight: FontWeight.bold))),
+                    SizedBox(width: 48), // 削除ボタンのスペース
+                  ],
+                ),
+              ),
               Expanded(
                 child: ReorderableListView.builder(
+                  // buildDefaultDragHandlesをfalseに設定し、カスタムのドラッグハンドルを使用
+                  buildDefaultDragHandles: false,
                   itemCount: _currentLevels.length,
                   onReorder: (oldIndex, newIndex) {
                     setState(() {
@@ -205,109 +379,153 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       }
                       final item = _currentLevels.removeAt(oldIndex);
                       _currentLevels.insert(newIndex, item);
+                      // 並べ替え後もコントローラーの状態は維持されるため、再初期化は不要
+                      // ただし、もしコントローラーとモデルの同期が取れていない場合は
+                      // ここで_initControllers()を呼び出すことも検討するが、
+                      // onChangedでリアルタイム更新しているため不要
                     });
                   },
                   itemBuilder: (context, index) {
                     final level = _currentLevels[index];
+                    
+                    // 事前に計算された表示文字列をマップから取得
+                    final levelDisplay = calculatedLevelDisplays[level.id] ?? '';
+
                     return Card(
                       key: ValueKey(level.id), // ReorderableListViewにはkeyが必須
-                      margin: const EdgeInsets.symmetric(vertical: 8.0),
-                      elevation: 3,
+                      margin: const EdgeInsets.symmetric(vertical: 4.0),
+                      elevation: 1,
                       child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                        child: Row(
                           children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  level.isBreak ? '休憩レベル' : 'レベル ${index + 1}',
-                                  style: const TextStyle(
-                                      fontSize: 18, fontWeight: FontWeight.bold),
+                            // ドラッグハンドルアイコンを最も左に配置
+                            ReorderableDragStartListener( // ここをドラッグハンドルとする
+                              index: index,
+                              child: SizedBox(
+                                width: 80, // アイコンとテキストのスペースを確保
+                                child: Row( // アイコンとテキストを横並びにする
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    const Icon(Icons.drag_handle, size: 20, color: Colors.grey), // ドラッグハンドルアイコン
+                                    const SizedBox(width: 4), // アイコンとテキストの間のスペース
+                                    Expanded( // TextをExpandedで囲む
+                                      child: Text(
+                                        levelDisplay, // 調整した表示を使用
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                        overflow: TextOverflow.ellipsis, // 必要に応じて省略
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () => _deleteBlindLevel(level.id),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            TextFormField(
-                              initialValue: level.durationMinutes.toString(),
-                              decoration: InputDecoration(
-                                labelText: level.isBreak
-                                    ? '休憩時間 (分)'
-                                    : '継続時間 (分)',
-                                border: const OutlineInputBorder(),
                               ),
-                              keyboardType: TextInputType.number,
-                              validator: (value) {
-                                if (value == null || int.tryParse(value) == null) {
-                                  return '有効な時間を入力してください';
-                                }
-                                return null;
-                              },
-                              onSaved: (value) {
-                                level.durationMinutes = int.parse(value!);
-                              },
                             ),
+                            // 継続時間
+                            Expanded(
+                              flex: 2,
+                              child: TextFormField(
+                                controller: _durationControllers[level.id], // コントローラーを使用
+                                decoration: const InputDecoration(
+                                  isDense: true, // 高さを詰める
+                                  contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                  border: OutlineInputBorder(),
+                                ),
+                                keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  if (value == null || int.tryParse(value) == null || int.parse(value!) <= 0) {
+                                    return ''; // エラーメッセージは簡潔に
+                                  }
+                                  return null;
+                                },
+                                onChanged: (value) { // 入力時にモデルを更新
+                                  level.durationMinutes = int.tryParse(value) ?? 0;
+                                },
+                              ),
+                            ),
+                            // Small Blind, Big Blind, Ante
                             if (!level.isBreak) ...[
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: level.smallBlind.toString(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Small Blind',
-                                  border: OutlineInputBorder(),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  controller: _sbControllers[level.id], // コントローラーを使用
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value == null || int.tryParse(value) == null || int.parse(value!) < 0) {
+                                      return '';
+                                    }
+                                    return null;
+                                  },
+                                  onChanged: (value) { // 入力時にモデルを更新
+                                    level.smallBlind = int.tryParse(value) ?? 0;
+                                  },
                                 ),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  if (value == null || int.tryParse(value) == null) {
-                                    return '有効な値を入力してください';
-                                  }
-                                  return null;
-                                },
-                                onSaved: (value) {
-                                  level.smallBlind = int.parse(value!);
-                                },
                               ),
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: level.bigBlind.toString(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Big Blind',
-                                  border: OutlineInputBorder(),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  controller: _bbControllers[level.id], // コントローラーを使用
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value == null || int.tryParse(value) == null || int.parse(value!) < 0) {
+                                      return '';
+                                    }
+                                    return null;
+                                  },
+                                  onChanged: (value) { // 入力時にモデルを更新
+                                    level.bigBlind = int.tryParse(value) ?? 0;
+                                  },
                                 ),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  if (value == null || int.tryParse(value) == null) {
-                                    return '有効な値を入力してください';
-                                  }
-                                  return null;
-                                },
-                                onSaved: (value) {
-                                  level.bigBlind = int.parse(value!);
-                                },
                               ),
-                              const SizedBox(height: 10),
-                              TextFormField(
-                                initialValue: level.ante.toString(),
-                                decoration: const InputDecoration(
-                                  labelText: 'Ante',
-                                  border: OutlineInputBorder(),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  controller: _anteControllers[level.id], // コントローラーを使用
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value == null || int.tryParse(value) == null || int.parse(value!) < 0) {
+                                      return '';
+                                    }
+                                    return null;
+                                  },
+                                  onChanged: (value) { // 入力時にモデルを更新
+                                    level.ante = int.tryParse(value) ?? 0;
+                                  },
                                 ),
-                                keyboardType: TextInputType.number,
-                                validator: (value) {
-                                  if (value == null || int.tryParse(value) == null) {
-                                    return '有効な値を入力してください';
-                                  }
-                                  return null;
-                                },
-                                onSaved: (value) {
-                                  level.ante = int.parse(value!);
-                                },
                               ),
+                            ] else ...[
+                              // 休憩レベルの場合はSB, BB, Anteの入力フィールドを非表示にする
+                              const Expanded(flex: 2, child: SizedBox()),
+                              const SizedBox(width: 8),
+                              const Expanded(flex: 2, child: SizedBox()),
+                              const SizedBox(width: 8),
+                              const Expanded(flex: 2, child: SizedBox()),
                             ],
+                            // 削除ボタン
+                            SizedBox(
+                              width: 48,
+                              child: IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () => _deleteBlindLevel(level.id),
+                              ),
+                            ),
                           ],
                         ),
                       ),

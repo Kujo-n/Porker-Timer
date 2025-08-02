@@ -24,6 +24,14 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProxyProvider3<SettingsService, AudioService, LogService, TimerService>(
           create: (_) => TimerService(),
           update: (context, settingsService, audioService, logService, timerService) {
+            // TimerServiceがまだ初期設定をロードしていない場合のみ実行
+            // WidgetsBinding.instance.addPostFrameCallback を使用して、
+            // フレーム構築後に非同期処理を実行し、UIスレッドをブロックしないようにする
+            if (timerService != null && timerService.currentSettings == null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                timerService.init(settingsService); // TimerServiceの非同期初期化メソッドを呼び出す
+              });
+            }
             return timerService ?? TimerService();
           },
         ),
