@@ -257,6 +257,15 @@ class TimerService extends ChangeNotifier {
         _remainingSeconds--;
       } else {
         _timer?.cancel();
+        // ★ ここで音声再生（タイマーが0になった瞬間のみ）
+        final nextLevelValue = nextLevel; // ←変数名を変更
+        if (nextLevelValue != null) {
+          if (nextLevelValue.isBreak) {
+            audioService.playNotificationSound();
+          } else {
+            audioService.playNotificationSound();
+          }
+        }
         _moveToNextLevel(logService, audioService);
         if (_isRunning) {
           _startCountdown(logService, audioService);
@@ -277,14 +286,12 @@ class TimerService extends ChangeNotifier {
 
       String eventDescription;
       if (newLevel.isBreak) {
-        audioService.playNotificationSound();
         eventDescription = '休憩が始まりました。休憩時間: ${newLevel.durationMinutes}分';
         logService.addLog(EventLogEntry(
             timestamp: DateTime.now(),
             eventType: 'BreakStart',
             description: eventDescription));
       } else {
-        audioService.playNotificationSound();
         eventDescription =
             'ブラインドレベルがSmall Blind: ${newLevel.smallBlind}, Big Blind: ${newLevel.bigBlind}, Ante: ${newLevel.ante} に上がりました。';
         logService.addLog(EventLogEntry(

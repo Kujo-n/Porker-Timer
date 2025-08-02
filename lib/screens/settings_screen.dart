@@ -59,9 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
 
       // 3. どの設定もロードできなかった場合、新規のデフォルト設定を作成
-      if (loadedSettings == null) {
-        loadedSettings = TournamentSettings(name: '新規設定', levels: []); // 初期は空のレベルリスト
-      }
+      loadedSettings ??= TournamentSettings(name: '新規設定', levels: []);
 
       // UIを更新
       setState(() {
